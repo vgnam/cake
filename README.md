@@ -9,7 +9,7 @@ Is a Piece of CAKE with LLMs**
 
 <p align="center">
   <a href="https://github.com/richardcsuwandi/cake/stargazers"><img src="https://img.shields.io/github/stars/richardcsuwandi/cake?style=social" alt="GitHub stars"></a>
-  <a href="https://neurips.cc"><img src="https://img.shields.io/badge/Paper-NeurIPS%202025-blue" alt="NeurIPS 2025"></a>
+  <a href="https://arxiv.org/abs/2509.17998"><img src="https://img.shields.io/badge/Paper-NeurIPS%202025-blue" alt="NeurIPS 2025"></a>
 </p>
 
 [**Overview**](#overview) • [**Quick Start**](#quick-start) • [**Experiments**](#experiments)
@@ -116,8 +116,15 @@ cake = CAKE(
 
 If you use CAKE in your research, please cite our paper:
 
-*Coming soon!*
+```bibtex
+@article{suwandi2025cake,
+  title={Adaptive Kernel Design for Bayesian Optimization Is a Piece of CAKE with LLMs},
+  author={Richard Cornelius Suwandi and Feng Yin and Juntao Wang and Renjie Li and Tsung-Hui Chang and Sergios Theodoridis},
+  journal={arXiv preprint arXiv:2509.17998},
+  year={2025}
+}
+```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the [MIT License](LICENSE).
