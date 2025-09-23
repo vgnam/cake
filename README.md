@@ -4,7 +4,8 @@
 
 <img src="assets/cake.png" alt="CAKE" width="100%">
 
-**Adaptive Kernel Design for Bayesian Optimization using Large Language Models**
+**Adaptive Kernel Design for Bayesian Optimization
+Is a Piece of CAKE with LLMs**
 
 <p align="center">
   <a href="https://github.com/richardcsuwandi/cake/stargazers"><img src="https://img.shields.io/github/stars/richardcsuwandi/cake?style=social" alt="GitHub stars"></a>
