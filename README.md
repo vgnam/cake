@@ -13,7 +13,6 @@
 [![Paper](https://img.shields.io/badge/paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2509.17998) 
 [![Hugging Face Collection](https://img.shields.io/badge/HuggingFace-fcd022?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/papers/2509.17998)
 [![GitHub Stars](https://img.shields.io/github/stars/richardcsuwandi/cake?style=for-the-badge&logo=github&logoColor=white&label=Stars&color=000000)](https://github.com/richardcsuwandi/cake)
-<!-- [![X](https://img.shields.io/badge/X-000000?style=for-the-badge&logo=X&logoColor=white)](https://x.com/HaoranLi_/status/1969831293748936998)  -->
 
 
 [**Overview**](#overview) • [**Quick Start**](#quick-start) • [**Experiments**](#experiments)
