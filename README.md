@@ -103,7 +103,7 @@ python hpobench_exp.py
 
 ## LLM Configuration
 
-CAKE supports OpenAI GPT models and compatible APIs. Configure your API key:
+CAKE supports OpenAI models and compatible APIs. Configure your API key:
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
