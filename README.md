@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="assets/cake.png" alt="CAKE" width="400">
+<img src="assets/cake.png" alt="CAKE" width="100%">
 
 **Adaptive Kernel Design for Bayesian Optimization using Large Language Models**
 
