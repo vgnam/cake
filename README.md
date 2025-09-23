@@ -4,23 +4,23 @@
 
 <img src="assets/cake.png" alt="CAKE" width="100%">
 
-**Adaptive Kernel Design for Bayesian Optimization
-Is a Piece of CAKE with LLMs**
+**Adaptive Kernel Design for Bayesian Optimization Is a Piece of CAKE with LLMs**
 
 <p align="center">
   <strong>✨ Accepted at NeurIPS 2025 ✨</strong>
 </p>
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2509.17998"><img src="https://img.shields.io/badge/arXiv-2509.17998-b31b1b.svg" alt="arXiv"></a>
-  <a href="https://github.com/richardcsuwandi/cake/stargazers"><img src="https://img.shields.io/github/stars/richardcsuwandi/cake?style=social" alt="GitHub stars"></a>
-</p>
+[![Paper](https://img.shields.io/badge/paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2509.17998) 
+[![Hugging Face Collection](https://img.shields.io/badge/HuggingFace-fcd022?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/papers/2509.17998)
+[![GitHub Stars](https://img.shields.io/github/stars/richardcsuwandi/cake?style=for-the-badge&logo=github&logoColor=white&label=Stars&color=000000)](https://github.com/richardcsuwandi/cake)
+<!-- [![X](https://img.shields.io/badge/X-000000?style=for-the-badge&logo=X&logoColor=white)](https://x.com/HaoranLi_/status/1969831293748936998)  -->
+
 
 [**Overview**](#overview) • [**Quick Start**](#quick-start) • [**Experiments**](#experiments)
 
 </div>
 
-We present **CAKE** (Context-Aware Kernel Evolution), a novel framework that leverages large language models to adaptively evolve Gaussian Process kernel functions for Bayesian Optimization. CAKE combines evolutionary algorithms with LLM reasoning to automatically discover kernel structures that capture patterns in optimization landscapes.
+We present **CAKE** (Context-Aware Kernel Evolution), a novel framework that leverages large language models to adaptively evolve Gaussian Process kernel functions for Bayesian optimization. CAKE combines evolutionary algorithms with LLM reasoning to automatically discover kernel structures that capture patterns in optimization landscapes.
 
 ## Overview
 
