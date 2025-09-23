@@ -8,31 +8,36 @@
 Is a Piece of CAKE with LLMs**
 
 <p align="center">
+  <strong>✨ Accepted at NeurIPS 2025 ✨</strong>
+</p>
+
+<p align="center">
+  <a href="https://arxiv.org/abs/2509.17998"><img src="https://img.shields.io/badge/arXiv-2509.17998-b31b1b.svg" alt="arXiv"></a>
   <a href="https://github.com/richardcsuwandi/cake/stargazers"><img src="https://img.shields.io/github/stars/richardcsuwandi/cake?style=social" alt="GitHub stars"></a>
-  <a href="https://arxiv.org/abs/2509.17998"><img src="https://img.shields.io/badge/Paper-NeurIPS%202025-blue" alt="NeurIPS 2025"></a>
 </p>
 
 [**Overview**](#overview) • [**Quick Start**](#quick-start) • [**Experiments**](#experiments)
 
 </div>
 
-This repository contains the official implementation of **CAKE** (Context-Aware Kernel Evolution), a novel framework that leverages large language models to adaptively evolve Gaussian Process kernel functions for Bayesian Optimization. CAKE combines evolutionary algorithms with LLM reasoning to automatically discover kernel structures that capture patterns in optimization landscapes.
+We present **CAKE** (Context-Aware Kernel Evolution), a novel framework that leverages large language models to adaptively evolve Gaussian Process kernel functions for Bayesian Optimization. CAKE combines evolutionary algorithms with LLM reasoning to automatically discover kernel structures that capture patterns in optimization landscapes.
 
 ## Overview
 
-### Why CAKE
+### Motivation
 
-Gaussian Process (GP) kernels are critical for the performance of Bayesian Optimization, but selecting appropriate kernels requires domain expertise and is often done manually. CAKE addresses this challenge by using LLMs to guide the evolution of kernel expressions through crossover and mutation operations, enabling automatic discovery of problem-specific kernel structures without human intervention.
+Selecting an appropriate Gaussian Process (GP) kernel is critical for ensuring effective exploration and exploitation in Bayesian optimization. However, this process typically requires significant domain expertise and manual effort. **CAKE** automates kernel selection by leveraging large language models (LLMs) to evolve kernel expressions, enabling the discovery of problem-specific kernel structures without manual intervention.
 
-### How CAKE Works
+### Method
 
-CAKE operates through an evolutionary process where:
+The CAKE framework follows an evolutionary process, which is summarized as follows:
 
-1. **Population Initialization**: Starts with a population of base kernels (SE, Matérn, Periodic, Linear, RQ)
-2. **Fitness Evaluation**: Assesses kernels using Bayesian Information Criterion (BIC) on observed data
-3. **LLM-Guided Operations**: Uses language models to perform crossover and mutation operations
-4. **Selection**: Maintains population diversity while preserving high-performing kernels
-5. **Optimization**: Uses evolved kernels for Bayesian Optimization acquisition functions
+| Step                       | Description                                                                                   |
+|----------------------------|----------------------------------------------------------------------------------------------|
+| **Initialization** | Initialize the population with a diverse set of base kernels                 |
+| **Fitness evaluation**         | Evaluate each kernel using the fitness function on observed data           |
+| **LLM-guided evolution**     | Apply crossover and mutation to kernel expressions, guided by LLM reasoning         |
+| **Selection**                 | Retain high-performing kernels and proceed to the next generation                         |
 
 
 ## Quick Start
@@ -114,7 +119,7 @@ cake = CAKE(
 
 ## Citation
 
-If you use CAKE in your research, please cite our paper:
+If you find this work useful, please consider leaving a ⭐ and cite our paper:
 
 ```bibtex
 @article{suwandi2025cake,
