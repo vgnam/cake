@@ -119,7 +119,7 @@ cake = CAKE(
 
 ## Citation
 
-If you find this work useful, please consider leaving a ⭐ and cite our paper:
+If you find this work useful, please consider leaving a ⭐ and citing our paper:
 
 ```bibtex
 @article{suwandi2025cake,
