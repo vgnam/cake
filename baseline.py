@@ -1,175 +1,108 @@
 import numpy as np
-import torch
-import gpytorch
-from botorch.acquisition.analytic import ExpectedImprovement, LogExpectedImprovement
-from botorch.optim import optimize_acqf
-from botorch.models import SingleTaskGP
-from botorch.fit import fit_gpytorch_model
-from botorch.models.transforms import Normalize, Standardize
-from gpytorch.likelihoods import GaussianLikelihood
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from gpytorch.kernels import RBFKernel, MaternKernel, LinearKernel, PeriodicKernel, RQKernel
+from sklearn.svm import SVC
+from sklearn.model_selection import GridSearchCV, cross_val_score
+
+from svm import compute_kernel_matrix, compute_cka, fit_svm_model, BASE_KERNEL_FUNCTIONS
 
 
-from gp import fit_gp_model
-from utils import generate_train_data, generate_config
-
-class EGP:
-    def __init__(self, configs):
-        self.configs = configs
-        self.device = configs["device"]
-        self.bounds = configs["bounds"]
-        self.dim = configs["dim"]
-        self.kernels = [RBFKernel(), LinearKernel(), PeriodicKernel(), RQKernel()]
-        self.kernel_names = ["SE", "LIN", "PER", "RQ"]
-        self.M = len(self.kernels)
-        self.weights = torch.ones(self.M, device=self.device) / self.M
-
-    def fit_models(self, train_x, train_y):
-        self.models = []
-        for kernel in self.kernels:
-            model = SingleTaskGP(
-                train_x, train_y.unsqueeze(-1),
-                covar_module=kernel,
-                outcome_transform=Standardize(m=1),
-                input_transform=Normalize(d=self.dim)
-            )
-            likelihood = GaussianLikelihood(noise_constraint=gpytorch.constraints.GreaterThan(1e-5))
-            likelihood.noise = 1e-4
-            mll = ExactMarginalLogLikelihood(likelihood, model)
-            fit_gpytorch_model(mll)
-            self.models.append(model)
-
-    def update_weights(self, train_x, train_y):
-        log_likelihoods = torch.zeros(self.M, device=self.device)
-        for i, model in enumerate(self.models):
-            log_likelihoods[i] = model.likelihood(model(train_x)).log_prob(train_y).sum()
-        self.weights = torch.softmax(log_likelihoods, dim=0)
-
-    def sample_model(self):
-        return np.random.choice(self.M, p=self.weights.detach().numpy())
-
-    def get_next_query(self, train_x, train_y, configs):
-        self.fit_models(train_x, train_y)
-        self.update_weights(train_x, train_y)
-
-        sampled_model_index = self.sample_model()
-        model = self.models[sampled_model_index]
-
-        print(f"kernel: {self.kernel_names[sampled_model_index]}")
-
-        policy = ExpectedImprovement(model=model, best_f=train_y.max())
+def evaluate_fixed_kernels(X_train, y_train, X_test, y_test):
+    """
+    Evaluate each base kernel individually using CKA and SVM test accuracy.
+    Returns:
+        dict: {kernel_name: {"cka": float, "accuracy": float}}
+    """
+    results = {}
+    for kernel_name in BASE_KERNEL_FUNCTIONS:
         try:
-            next_x, _ = optimize_acqf(
-                acq_function=policy,
-                bounds=self.bounds,
-                q=1,
-                num_restarts=20 * self.dim,
-                raw_samples=50 * self.dim,
-                retry_on_optimization_warning=True
-            )
-        except:
-            # next_x, _ = generate_train_data(1, configs["objective"], self.bounds, device=self.device)
-            next_x, _ = generate_config(1, self.configs, device=self.device)
+            model, cka, acc = fit_svm_model(X_train, y_train, kernel_name, X_test, y_test)
+            results[kernel_name] = {"cka": cka, "accuracy": acc}
+        except Exception as e:
+            results[kernel_name] = {"cka": 0.0, "accuracy": 0.0, "error": str(e)}
+    return results
 
-        return next_x
 
-def get_next_query_egp(train_x, train_y, configs):
-    egp = EGP(configs)
-    return egp.get_next_query(train_x, train_y, configs)
+def evaluate_grid_search(X_train, y_train, X_test, y_test):
+    """
+    Run GridSearchCV over kernel type and hyperparameters.
+    Returns:
+        dict: Best parameters, CV score, and test accuracy.
+    """
+    param_grid = [
+        {"kernel": ["rbf"], "C": [0.1, 1, 10], "gamma": ["scale", "auto", 0.01, 0.1]},
+        {"kernel": ["linear"], "C": [0.1, 1, 10]},
+        {"kernel": ["poly"], "C": [0.1, 1, 10], "degree": [2, 3, 4]},
+        {"kernel": ["sigmoid"], "C": [0.1, 1, 10], "gamma": ["scale", "auto"]},
+    ]
 
-def get_next_query_fixed(train_x, train_y, configs, kernel="SE"):
-    device = configs["device"]
-    bounds = configs["bounds"]
-    dim = configs["dim"]
+    grid = GridSearchCV(SVC(), param_grid, cv=5, scoring="accuracy", n_jobs=-1)
+    grid.fit(X_train, y_train)
 
-    print(f"kernel: {kernel}")
-    model, likelihood = fit_gp_model(train_x, train_y, kernel=kernel, compute_bic=False, device=device)
-    policy = ExpectedImprovement(model=model, best_f=train_y.max())
-    try:
-        next_x, _ = optimize_acqf(
-            acq_function=policy,
-            bounds=bounds,
-            q=1,
-            num_restarts=20 * dim,
-            raw_samples=50 * dim,
-            retry_on_optimization_warning=True
-        )
-    except:
-        # next_x, _ = generate_train_data(1, configs["objective"], bounds, device=device)
-        next_x, _ = generate_config(1, configs, device=device)
-    return next_x
+    test_acc = grid.score(X_test, y_test)
 
-def get_next_query_adaptive(train_x, train_y, configs, strategy="random"):
-    device = configs["device"]
-    bounds = configs["bounds"]
-    dim = configs["dim"]
+    return {
+        "best_params": grid.best_params_,
+        "best_cv_score": grid.best_score_,
+        "test_accuracy": test_acc
+    }
 
-    kernels = ["SE", "PER", "LIN", "RQ", "M3", "M5"]
-    if strategy == "random":
-        kernel = np.random.choice(kernels)
-        print(f"kernel: {kernel}")
-        model, likelihood = fit_gp_model(train_x, train_y, kernel=kernel, compute_bic=False, device=device)
-        policy = ExpectedImprovement(model=model, best_f=train_y.max())
+
+def evaluate_random_kernel(X_train, y_train, X_test, y_test, n_trials=10):
+    """
+    Randomly select kernel expressions and evaluate CKA and accuracy.
+    Returns:
+        dict: Best random kernel, CKA, and accuracy.
+    """
+    kernels = list(BASE_KERNEL_FUNCTIONS.keys())
+    operators = ["+", "*"]
+
+    best_cka = -1
+    best_result = None
+
+    for _ in range(n_trials):
+        # random single or composite kernel
+        if np.random.rand() < 0.5:
+            kernel_expr = np.random.choice(kernels)
+        else:
+            k1, k2 = np.random.choice(kernels, size=2, replace=True)
+            op = np.random.choice(operators)
+            kernel_expr = f"{k1} {op} {k2}"
+
         try:
-            next_x, _ = optimize_acqf(
-                acq_function=policy,
-                bounds=bounds,
-                q=1,
-                num_restarts=20 * dim,
-                raw_samples=50 * dim,
-                retry_on_optimization_warning=True
-            )
-        except:
-            # next_x, _ = generate_train_data(1, configs["objective"], bounds, device=device)
-            next_x, _ = generate_config(1, configs, device=device)
-    elif strategy in ["best", "bic"]:
-        models = {}
-        for kernel in kernels:
-            model, likelihood, bic = fit_gp_model(train_x, train_y, kernel=kernel, compute_bic=True, device=device)
-            models[kernel] = {"model": model, "bic": bic}
+            model, cka, acc = fit_svm_model(X_train, y_train, kernel_expr, X_test, y_test)
+            if cka > best_cka:
+                best_cka = cka
+                best_result = {"kernel": kernel_expr, "cka": cka, "accuracy": acc}
+        except Exception:
+            continue
 
-        if strategy == "best":
-            best_acq_val = -np.inf
-            for kernel in kernels:
-                model = models[kernel]["model"]
-                policy = ExpectedImprovement(model=model, best_f=train_y.max())
-                try:
-                    cand_next_x, acq_val = optimize_acqf(
-                        acq_function=policy,
-                        bounds=bounds,
-                        q=1,
-                        num_restarts=20 * dim,
-                        raw_samples=50 * dim
-                    )
-                except:
-                    acq_val = -np.inf
-                    cand_next_x = torch.tensor([float("nan") for _ in range(dim)], device=device).unsqueeze(0)
-                if acq_val > best_acq_val:
-                    best_acq_val = acq_val
-                    next_x = cand_next_x
-                    best_kernel = kernel
-            print(f"kernel: {best_kernel}")
-        elif strategy == "bic":
-            best_bic = np.inf
-            for kernel in kernels:
-                bic = models[kernel]["bic"]
-                if bic < best_bic:
-                    best_bic = bic
-                    best_model = models[kernel]["model"]
-                    best_kernel = kernel
-            print(f"kernel: {best_kernel}")
-            policy = ExpectedImprovement(model=best_model, best_f=train_y.max())
-            try:
-                next_x, _ = optimize_acqf(
-                    acq_function=policy,
-                    bounds=bounds,
-                    q=1,
-                    num_restarts=20 * dim,
-                    raw_samples=50 * dim,
-                    retry_on_optimization_warning=True
-                )
-            except:
-                # next_x, _ = generate_train_data(1, configs["objective"], bounds, device=device)
-                next_x, _ = generate_config(1, configs, device=device)
-    return next_x
+    return best_result
+
+
+if __name__ == "__main__":
+    from benchmark import get_dataset
+
+    dataset = "iris"
+    X_train, X_test, y_train, y_test = get_dataset(dataset)
+
+    print(f"Dataset: {dataset}")
+    print(f"Train: {X_train.shape}, Test: {X_test.shape}")
+    print("=" * 50)
+
+    # fixed kernels
+    print("\n--- Fixed Kernel Evaluation ---")
+    fixed = evaluate_fixed_kernels(X_train, y_train, X_test, y_test)
+    for k, v in fixed.items():
+        print(f"  {k}: CKA = {v['cka']:.4f}, Accuracy = {v['accuracy']:.4f}")
+
+    # grid search
+    print("\n--- Grid Search ---")
+    grid = evaluate_grid_search(X_train, y_train, X_test, y_test)
+    print(f"  Best params: {grid['best_params']}")
+    print(f"  CV score: {grid['best_cv_score']:.4f}")
+    print(f"  Test accuracy: {grid['test_accuracy']:.4f}")
+
+    # random kernel
+    print("\n--- Random Kernel ---")
+    rand = evaluate_random_kernel(X_train, y_train, X_test, y_test)
+    if rand:
+        print(f"  Best: {rand['kernel']}, CKA = {rand['cka']:.4f}, Accuracy = {rand['accuracy']:.4f}")

@@ -1,40 +1,61 @@
 import numpy as np
-import openai
-import os
+import time
+from litellm import completion
 
-import torch
-from botorch.acquisition.analytic import ExpectedImprovement, LogExpectedImprovement
-from botorch.optim import optimize_acqf
+from svm import compute_kernel_matrix, compute_cka, fit_svm_model, is_psd
 
-from gp import fit_gp_model
-
-# prompts for the LLM
+# prompts for the LLM — free-form kernel design
 SYSTEM_PROMPT_TEMPLATE = """
-You are an expert in machine learning, specializing in Gaussian processes. Here are the observations we have collected so far:
-{observations}
+You are an expert in machine learning, specializing in Support Vector Machines and kernel methods. Here is a summary of the classification dataset:
+{dataset_summary}
 
-Please analyze these observations to identify patterns in the data that can be captured by a kernel function. 
-You can use any of the following base kernels: {base_kernels}, and combine these kernels using the following operators: {operators}. 
-Your goal is to construct a kernel expression that best explains the observed data. 
-The kernel will be evaluated using a fitness score normalized between [0, 1], where higher values indicate better fit to the data.
+Your task is to design a kernel function for an SVM classifier that best separates the classes.
+
+Available base kernels: {base_kernels}
+Available operators to combine kernels:
+  +   : kernel sum (K1 + K2)
+  *   : element-wise kernel product / Hadamard product (K1 * K2)
+  **n : element-wise power (K**2, K**3, etc.)
+  @   : matrix product (K1 @ K2)
+  ()  : parentheses for grouping
+
+You are free to compose kernels creatively using any combination of the above.
+The kernel will be evaluated using Centered Kernel Alignment (CKA), scored in [0, 1].
+The resulting kernel matrix must be positive semi-definite (PSD) — invalid kernels will be rejected.
 """
 
 CROSSOVER_PROMPT_TEMPLATE = """
-You are given two parent kernels and their fitness scores:  
-{parent_kernel1} ({fitness1}),  {parent_kernel2} ({fitness2}) 
+You are given two parent kernels and their CKA fitness scores:
+  Parent 1: {parent_kernel1} (CKA = {fitness1:.4f})
+  Parent 2: {parent_kernel2} (CKA = {fitness2:.4f})
 
-Please propose a new kernel that has a potentially higher fitness score. 
-You may combine the parent kernels using any of the operators from: {operators}. 
-Briefly explain your reasoning behind the proposed kernel.
+Design a new kernel by creatively combining, merging, or restructuring the parent kernels.
+You may use any operators: +, *, **, @, and parentheses.
+You may also introduce new base kernels from: {base_kernels}.
+
+Think step by step about what patterns each parent captures and how to combine their strengths.
+
+Please respond EXACTLY in this format:
+Kernel: <your kernel expression using only the base kernel names and operators>
+Analysis: <brief explanation>
 """
 
 MUTATION_PROMPT_TEMPLATE = """
-You are given a kernel and its fitness score:  
-{kernel} ({fitness})
+You are given a kernel and its CKA fitness score:
+  {kernel} (CKA = {fitness:.4f})
 
-Please propose a new kernel that has a potentially higher fitness score. 
-You may replace a base kernel in the current expression with another base kernel from the set: {base_kernels}. 
-Briefly explain your reasoning behind the proposed kernel.
+Propose an improved kernel by modifying, extending, or restructuring the expression.
+You may:
+  - Replace any base kernel with another from: {base_kernels}
+  - Add, remove, or change operators (+, *, **, @)
+  - Restructure with parentheses
+  - Make the expression more complex or simpler
+
+Think about what might be limiting this kernel and how to improve it.
+
+Please respond EXACTLY in this format:
+Kernel: <your kernel expression using only the base kernel names and operators>
+Analysis: <brief explanation>
 """
 
 class CAKE:
@@ -42,20 +63,18 @@ class CAKE:
             self,
             num_crossover=1, # number of crossovers operation
             mutation_prob=0.7,
-            num_population=6, # number of kernels to keep in the population
-            model_name="gpt-4o-mini", # LLM to use
-            api_base=None, # custom API base URL (optional)
-            temperature=0.7, # LLM temperature
+            num_population=4, # number of kernels to keep in the population
+            model_name="nvidia_nim/openai/gpt-oss-120b", # LLM to use
+            temperature=1.0, # LLM temperature
             top_p=1.0, # LLM top_p parameter
-            device="cpu"
         ):
         self.num_crossover = num_crossover
         self.mutation_prob = mutation_prob
         self.num_population = num_population
 
-        # define base kernels and operators
-        self.base_kernels = ["SE", "PER", "LIN", "RQ", "M3", "M5"]
-        self.operators = ["+", "*"]
+        # define base kernels (expanded set)
+        self.base_kernels = ["RBF", "LINEAR", "POLY2", "POLY3", "POLY4", "SIGMOID", "COSINE", "LAPLACIAN"]
+        self.operators = ["+", "*", "**", "@"]
 
         # initial population
         self.population = {kernel: {} for kernel in self.base_kernels}
@@ -63,34 +82,31 @@ class CAKE:
         self.model_name = model_name
         self.temperature = temperature
         self.top_p = top_p
-        self.device = device
-
-        # openai API setup
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not found. Please set it with your API key.")
-        
-        openai.api_key = api_key
-        
-        # set custom API base if provided
-        if api_base:
-            openai.api_base = api_base
 
     def __call__(self, message, system_prompt):
         if not message:
-            return False, "Your input is empty."
+            return "Your input is empty."
 
-        # create LLM
-        response = openai.ChatCompletion.create(
-            model=self.model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message}
-            ],
-            temperature=self.temperature,
-            top_p=self.top_p
-        )
-        return response["choices"][0]["message"]["content"]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message}
+        ]
+
+        for attempt in range(5):
+            try:
+                response = completion(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=self.temperature,
+                    timeout=60,
+                )
+                return response["choices"][0]["message"]["content"]
+            except Exception as e:
+                print(f"[LLM ERROR] Attempt {attempt + 1}/5: {e}")
+                if attempt == 4:
+                    raise RuntimeError("Failed to get LLM response after 5 attempts") from e
+                time.sleep(10)
+        return ""
 
     @staticmethod
     def parse_response(response):
@@ -101,74 +117,90 @@ class CAKE:
         """
         kernel_start = response.find("Kernel: ") + len("Kernel: ")
         kernel_end = response.find("\n", kernel_start)
-        kernel = response[kernel_start:kernel_end]
+        kernel = response[kernel_start:kernel_end].strip()
 
         analysis_start = response.find("Analysis: ") + len("Analysis: ")
         analysis = response[analysis_start:]
         return kernel, analysis
 
-    def update_data(self, train_x, train_y):
+    def update_data(self, X, y):
         """
         Function to update the training data and system prompt.
         Args:
-            train_x (torch.Tensor): training input data.
-            train_y (torch.Tensor): training output data.
+            X (np.ndarray): training features of shape (n_samples, n_features).
+            y (np.ndarray): training labels of shape (n_samples,).
         """
-        self.train_x = train_x.to(self.device)
-        self.train_y = train_y.to(self.device)
+        self.X = X
+        self.y = y
 
-        # update the data and system prompt
-        observations = list(zip(self.train_x.tolist(), self.train_y.tolist()))
-        observations = "\n".join([f"x = {x}, y = {y}" for x, y in observations])
-        self.system_prompt = SYSTEM_PROMPT_TEMPLATE.format(observations=observations, base_kernels=self.base_kernels, operators=self.operators)
+        # build dataset summary for the system prompt
+        n_samples, n_features = X.shape
+        classes, counts = np.unique(y, return_counts=True)
+        class_dist = ", ".join([f"class {c}: {cnt}" for c, cnt in zip(classes, counts)])
+        feature_stats = f"mean={X.mean(axis=0)[:5].round(3).tolist()}, std={X.std(axis=0)[:5].round(3).tolist()}"
+
+        dataset_summary = (
+            f"- {n_samples} samples, {n_features} features\n"
+            f"- Classes: {class_dist}\n"
+            f"- Feature statistics (first 5): {feature_stats}"
+        )
+        self.system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+            dataset_summary=dataset_summary,
+            base_kernels=self.base_kernels,
+            operators=self.operators
+        )
 
     def compute_fitness(self):
         """
-        Function to compute the BIC values for the kernels in the population.
+        Function to compute the CKA fitness scores for the kernels in the population.
         """
-        # compute the BIC values for each kernel
-        for kernel in self.population:
-            model, likelihood, bic = fit_gp_model(self.train_x, self.train_y, kernel=kernel, device=self.device)
-            self.population[kernel] = {
-                "model": model,
-                "fitness": bic
-            }
+        for kernel in list(self.population.keys()):
+            try:
+                K = compute_kernel_matrix(self.X, kernel)
+                cka = compute_cka(K, self.y)
+                self.population[kernel] = {"fitness": cka}
+            except Exception:
+                self.population[kernel] = {"fitness": 0.0}
 
-        # get the fitness values
-        fitness_values = torch.tensor([self.population[kernel]["fitness"] for kernel in self.population], dtype=torch.float64)
-        fitness_values = (fitness_values - fitness_values.mean()) / fitness_values.std() # standardize the fitness values for numerical stability
-
-        # normalize the fitness values as probabilities
-        self.population_prob = torch.softmax(-fitness_values, dim=0)
+        # get the fitness values and compute selection probabilities
+        fitness_values = np.array([self.population[k]["fitness"] for k in self.population])
+        # shift to avoid negative values for softmax
+        fitness_shifted = fitness_values - fitness_values.max()
+        exp_vals = np.exp(fitness_shifted)
+        self.population_prob = exp_vals / exp_vals.sum()
 
     def generate_kernels(self):
         """
         Function to generate new kernels using crossover and mutation.
+        LLM is free to propose any kernel expression; PSD is validated after computation.
         """
         # crossover step
         mating_pool = list(self.population.keys())
         for _ in range(self.num_crossover):
-            parent_kernel1, parent_kernel2 = np.random.choice(mating_pool, size=2, p=self.population_prob, replace=False)
+            parent_kernel1, parent_kernel2 = np.random.choice(
+                mating_pool, size=2, p=self.population_prob, replace=False
+            )
             try:
-                response = self(CROSSOVER_PROMPT_TEMPLATE.format_map({
-                    "parent_kernel1": parent_kernel1,
-                    "parent_kernel2": parent_kernel2,
-                    "fitness1": self.population[parent_kernel1]["fitness"],
-                    "fitness2": self.population[parent_kernel2]["fitness"],
-                    "operators": self.operators
-                }), self.system_prompt)
+                response = self(CROSSOVER_PROMPT_TEMPLATE.format(
+                    parent_kernel1=parent_kernel1,
+                    parent_kernel2=parent_kernel2,
+                    fitness1=self.population[parent_kernel1]["fitness"],
+                    fitness2=self.population[parent_kernel2]["fitness"],
+                    base_kernels=self.base_kernels
+                ), self.system_prompt)
                 kernel, analysis = self.parse_response(response)
-                # if the kernel is too long, discard it
-            except:
-                kernel = f"{parent_kernel1} {np.random.choice(self.operators)} {parent_kernel2}"
+            except Exception:
+                # fallback: simple combination with PSD-safe operators
+                safe_ops = ["+", "*"]
+                kernel = f"{parent_kernel1} {np.random.choice(safe_ops)} {parent_kernel2}"
             try:
-                if len(kernel) < 10:
-                    model, likelihood, bic = fit_gp_model(self.train_x, self.train_y, kernel=kernel, device=self.device)
-                    self.population[kernel] = {
-                        "fitness": bic,
-                        "model": model
-                    }
-            except:
+                if len(kernel) < 60:
+                    K = compute_kernel_matrix(self.X, kernel)  # PSD validated inside
+                    cka = compute_cka(K, self.y)
+                    self.population[kernel] = {"fitness": cka}
+                    print(f"  [CROSSOVER] {kernel} → CKA = {cka:.4f}")
+            except Exception as e:
+                print(f"  [CROSSOVER REJECTED] {kernel}: {e}")
                 continue
 
         # mutation step
@@ -176,95 +208,55 @@ class CAKE:
             # select the fittest kernel to mutate
             kernel_to_mutate = max(self.population, key=lambda x: self.population[x]["fitness"])
             try:
-                response = self(MUTATION_PROMPT_TEMPLATE.format_map({
-                    "kernel": kernel_to_mutate,
-                    "fitness": self.population[kernel_to_mutate]["fitness"],
-                    "base_kernels": self.base_kernels
-                }), self.system_prompt)
+                response = self(MUTATION_PROMPT_TEMPLATE.format(
+                    kernel=kernel_to_mutate,
+                    fitness=self.population[kernel_to_mutate]["fitness"],
+                    base_kernels=self.base_kernels
+                ), self.system_prompt)
                 kernel, analysis = self.parse_response(response)
-                model, likelihood, bic = fit_gp_model(self.train_x, self.train_y, kernel=kernel, device=self.device)
-                self.population[kernel] = {
-                    "fitness": bic,
-                    "model": model
-                }
-            except:
-                pass
+                K = compute_kernel_matrix(self.X, kernel)  # PSD validated inside
+                cka = compute_cka(K, self.y)
+                self.population[kernel] = {"fitness": cka}
+                print(f"  [MUTATION] {kernel_to_mutate} → {kernel}, CKA = {cka:.4f}")
+            except Exception as e:
+                print(f"  [MUTATION REJECTED] {kernel}: {e}")
 
     def update_population(self):
         """
         Function to update the population by selecting the fittest kernels.
         """
-        # sort population by fitness
-        self.population = dict(sorted(self.population.items(), key=lambda x: x[1]["fitness"])) # sort by fitness
-        self.population = dict(list(self.population.items())[:self.num_population]) # keep the top kernels
-        self.population_prob = torch.softmax(torch.tensor([self.population[kernel]["fitness"] for kernel in self.population], dtype=torch.float64), dim=0)
+        # sort population by fitness (descending) and keep the top kernels
+        sorted_pop = sorted(self.population.items(), key=lambda x: x[1]["fitness"], reverse=True)
+        self.population = dict(sorted_pop[:self.num_population])
+
+        # recompute selection probabilities
+        fitness_values = np.array([self.population[k]["fitness"] for k in self.population])
+        fitness_shifted = fitness_values - fitness_values.max()
+        exp_vals = np.exp(fitness_shifted)
+        self.population_prob = exp_vals / exp_vals.sum()
 
     def get_best_kernel(self):
         """
         Function to return the best kernel in the population.
         Returns:
-            str: the best kernel in the population.
+            str: the best kernel expression.
+            float: the CKA fitness score.
         """
-        return max(self.population, key=lambda x: self.population[x]["fitness"])
+        best = max(self.population, key=lambda x: self.population[x]["fitness"])
+        return best, self.population[best]["fitness"]
 
-    def get_next_query(self, bounds):
+    def run(self, X, y):
         """
-        Function to select the next query point.
+        Function to run CAKE for SVM kernel selection.
         Args:
-            bounds (list): the bounds of the input space.
-        Returns:
-            torch.Tensor: the next query point.
-        """
-        dim = len(bounds[0])
-        kernels = self.population.keys()
-
-        # compute the weights as the normalized fitness values
-        weights = {kernel: self.population_prob[i].item() for i, kernel in enumerate(kernels)}
-
-        acq_vals = []
-        cand_next_xs = []
-        for kernel in kernels:
-            # use EI as the acquisition function
-            policy = ExpectedImprovement(
-                model=self.population[kernel]["model"], best_f=self.train_y.max()
-            )
-            try:
-                # optimize the acquisition function and obtain the next query point
-                cand_next_x, acq_val = optimize_acqf(
-                    acq_function=policy,
-                    bounds=bounds,
-                    q=1,
-                    num_restarts=20 * dim,
-                    raw_samples=50 * dim,
-                    retry_on_optimization_warning=True
-                )
-                acq_vals.append(acq_val.item())
-                cand_next_xs.append(cand_next_x)
-            except:
-                acq_vals.append(-np.inf)
-                cand_next_xs.append(torch.tensor([np.nan]))
-
-        # calculate the weighted acquisition values and select the best one
-        weighted_acq_vals = [weights[kernel] * acq_vals[j] for j, kernel in enumerate(kernels)]
-        best_acq_idxs = np.where(weighted_acq_vals == np.max(weighted_acq_vals))[0]
-        best_acq_idx = np.random.choice(best_acq_idxs) # handle ties
-        next_x = cand_next_xs[best_acq_idx]
-
-        # print kernel
-        print(f"kernel: {list(kernels)[best_acq_idx]}")
-
-        return next_x
-
-    def run(self, train_x, train_y):
-        """
-        Function to run CAKE for kernel selection.
-        Args:
-            train_x (torch.Tensor): training input data.
-            train_y (torch.Tensor): training output data.
+            X (np.ndarray): training features.
+            y (np.ndarray): training labels.
         Returns:
             str: the best kernel selected by CAKE.
+            float: the CKA fitness score of the best kernel.
         """
-        self.update_data(train_x, train_y)
+        self.update_data(X, y)
         self.compute_fitness()
         self.generate_kernels()
         self.update_population()
+        return self.get_best_kernel()

@@ -1,44 +1,33 @@
-# 🍰 CAKE: Context-Aware Kernel Evolution
+# 🍰 CAKE: Context-Aware Kernel Evolution for SVM
 
 <div align="center">
 
-<img src="assets/cake.png" alt="CAKE" width="100%">
-
-**Adaptive Kernel Design for Bayesian Optimization Is a Piece of CAKE with LLMs**
-
-<p align="center">
-  <strong>✨ Accepted at NeurIPS 2025 ✨</strong>
-</p>
-
-[![Paper](https://img.shields.io/badge/paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2509.17998) 
-[![Hugging Face Collection](https://img.shields.io/badge/HuggingFace-fcd022?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/papers/2509.17998)
-[![X](https://img.shields.io/badge/X-000000?style=for-the-badge&logo=X&logoColor=white)](https://x.com/richardcsuwandi/status/1970856650048462946)
-[![GitHub Stars](https://img.shields.io/github/stars/richardcsuwandi/cake?style=for-the-badge&logo=github&logoColor=white&label=Stars&color=000000)](https://github.com/richardcsuwandi/cake)
-
-
-[**Overview**](#overview) • [**Quick Start**](#quick-start) • [**Experiments**](#experiments)
+**LLM-Guided Kernel Design for Support Vector Machines using Centered Kernel Alignment**
 
 </div>
 
-We present **CAKE** (Context-Aware Kernel Evolution), a novel framework that leverages large language models to adaptively evolve Gaussian Process kernel functions for Bayesian optimization. CAKE combines evolutionary algorithms with LLM reasoning to automatically discover kernel structures that capture patterns in optimization landscapes.
+We present **CAKE** (Context-Aware Kernel Evolution), a framework that leverages large language models to adaptively evolve SVM kernel functions for classification tasks. CAKE uses an evolutionary algorithm guided by LLM reasoning to discover kernel structures that maximize **Centered Kernel Alignment (CKA)** with the label structure.
 
 ## Overview
 
-### Motivation
-
-Selecting an appropriate Gaussian Process (GP) kernel is critical for ensuring effective exploration and exploitation in Bayesian optimization. However, this process typically requires significant domain expertise and manual effort. **CAKE** automates kernel selection by leveraging large language models (LLMs) to evolve kernel expressions, enabling the discovery of problem-specific kernel structures without manual intervention.
-
 ### Method
 
-The CAKE framework follows an evolutionary process, which is summarized as follows:
-
 | Step                       | Description                                                                                   |
-|----------------------------|----------------------------------------------------------------------------------------------|
-| **Initialization** | Initialize the population with a diverse set of base kernels                 |
-| **Fitness evaluation**         | Evaluate each kernel using the fitness function on observed data           |
-| **LLM-guided evolution**     | Apply crossover and mutation to kernel expressions, guided by LLM reasoning         |
-| **Selection**                 | Retain high-performing kernels and proceed to the next generation                         |
+|----------------------------|-----------------------------------------------------------------------------------------------|
+| **Initialization**         | Initialize the population with base kernels: RBF, LINEAR, POLY, SIGMOID                      |
+| **Fitness evaluation**     | Evaluate each kernel using CKA (alignment with the label kernel)                              |
+| **LLM-guided evolution**   | Apply crossover and mutation to kernel expressions, guided by LLM reasoning                   |
+| **Selection**              | Retain high-CKA kernels and proceed to the next generation                                    |
 
+### Centered Kernel Alignment (CKA)
+
+CKA measures how well a candidate kernel matrix **K** aligns with the ideal label kernel **yy^T**:
+
+```
+CKA(K, L) = HSIC(K, L) / sqrt(HSIC(K, K) * HSIC(L, L))
+```
+
+A higher CKA score means the kernel better captures the class structure — making it a principled, training-free fitness metric for kernel selection.
 
 ## Quick Start
 
@@ -52,82 +41,63 @@ cd cake
 # Set up environment variables
 export OPENAI_API_KEY="your-api-key-here"
 
-# Install dependencies (using uv)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv pip install -r requirements.txt --python 3.9
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 ### Basic Usage
 
 ```python
-import torch
+import numpy as np
 from cake import CAKE
-from benchmark import get_objective
+from benchmark import get_dataset
+
+# Load dataset
+X_train, X_test, y_train, y_test = get_dataset("iris")
 
 # Initialize CAKE
-cake = CAKE(
-    num_population=6,
-    mutation_prob=0.7,
-    model_name="gpt-4o-mini"
-)
+cake = CAKE(num_population=4, model_name="gpt-4o-mini")
 
-# Set up optimization problem
-objective, bounds, _ = get_objective("ackley2")
-train_x = torch.rand(10, 2) * 2 - 1
-train_y = objective(train_x)
-
-# Run kernel evolution
-best_kernel = cake.run(train_x, train_y)
-print(f"Best evolved kernel: {best_kernel}")
-
-# Use for optimization
-next_x = cake.get_next_query(bounds)
+# Run kernel evolution (multiple generations)
+for gen in range(5):
+    best_kernel, cka = cake.run(X_train, y_train)
+    print(f"Gen {gen+1}: {best_kernel} (CKA={cka:.4f})")
 ```
 
 ## Experiments
-To run the experiments in our paper, you can execute the following Python scripts:
 
 ```bash
-# Run on synthetic optimization functions
-python exp.py 
+# Run evolutionary kernel search
+python exp.py
 
-# Run on hyperparameter optimization tasks
-python hpobench_exp.py
+# Run baselines (fixed kernels, grid search, random)
+python baseline.py
 ```
+
+## Available Datasets
+
+| Dataset        | Samples | Features | Classes |
+|---------------|---------|----------|---------|
+| `iris`         | 150     | 4        | 3       |
+| `breast_cancer`| 569     | 30       | 2       |
+| `wine`         | 178     | 13       | 3       |
+| `digits`       | 1797    | 64       | 10      |
 
 ## Requirements
 
 - Python 3.9+
 - OpenAI API key (or compatible LLM API)
-- Dependencies: PyTorch, BoTorch, GPyTorch, OpenAI
+- Dependencies: NumPy, scikit-learn, matplotlib, seaborn, openai
 
 ## LLM Configuration
-
-CAKE supports OpenAI models and compatible APIs. Configure your API key:
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
 ```
 
-For other LLM providers, modify the CAKE initialization:
+For other LLM providers:
 ```python
-cake = CAKE(
-    model_name="your-model",
-    api_base="your-api-endpoint"  # if using non-OpenAI API
-)
-```
-
-## Citation
-
-If you find this work useful, please consider leaving a ⭐ and citing our paper:
-
-```bibtex
-@article{suwandi2025cake,
-  title={Adaptive Kernel Design for Bayesian Optimization Is a Piece of CAKE with LLMs},
-  author={Richard Cornelius Suwandi and Feng Yin and Juntao Wang and Renjie Li and Tsung-Hui Chang and Sergios Theodoridis},
-  journal={arXiv preprint arXiv:2509.17998},
-  year={2025}
-}
+cake = CAKE(model_name="your-model", api_base="your-api-endpoint")
 ```
 
 ## License

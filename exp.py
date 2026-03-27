@@ -1,84 +1,61 @@
-import torch
-
-from cake import CAKE
-from gp import fit_gp_model
-from benchmark import get_objective
-from utils import generate_train_data
-
 import numpy as np
-from tqdm import tqdm
+from cake import CAKE
+from svm import fit_svm_model
+from benchmark import get_dataset
+import os
+
+os.environ["NVIDIA_NIM_API_KEY"] = "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"
+
 import warnings
 warnings.filterwarnings("ignore")
 
 
-# use GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("running on", device)
+# ── Configuration ────────────────────────────────────────────────────────────
+dataset_name = "digits"       # dataset to use (see benchmark.py)
+num_generations = 10         # number of evolutionary generations
+num_population = 8          # population size
+model_name = "nvidia_nim/openai/gpt-oss-120b"  # LLM to use
+REPEAT = 3                  # number of repetitions
 
-# define the task
-task = "ackley2" # name of test function (see 'benchmark.py')
-print(f"simulation on {task}")
+print(f"Dataset: {dataset_name}")
+print(f"Generations: {num_generations}")
+print(f"LLM: {model_name}")
+print("=" * 50)
 
-objective, bounds, ground_truth_y = get_objective(task)
-print(f"ground truth: {ground_truth_y:.4f}")
-# plot_objective(objective, bounds)
-
-# create a problem info dictionary
-configs = {
-    "objective": objective,
-    "bounds": bounds,
-    "dim": len(bounds[0]), # dimension of the input
-    "ground_truth_y": ground_truth_y,
-    "device": device
-}
-
-method = "cake" # "cake" or "fixed or "adaptive"
-print(f"method: {method}")
-
-n = 5 # number of initial observations
-BUDGET = 10 * configs["dim"] # number of queries
-REPEAT = 10 # number of repetitions
-
-incumbents = torch.zeros(REPEAT, BUDGET, device=device)
-gap = torch.zeros((REPEAT, BUDGET), device=device)
 for r in range(REPEAT):
-    print("trial", r + 1)
+    print(f"\n--- Trial {r + 1}/{REPEAT} ---")
 
-    # initialize data
-    train_x, train_y = generate_train_data(n, objective, bounds, seed=r, device=device)
-    train_x = train_x.to(device)
-    train_y = train_y.to(device)
-    init_y = train_y.max().item() # get the initial best value
+    # load dataset
+    X_train, X_test, y_train, y_test = get_dataset(dataset_name, seed=r)
+    print(f"Train: {X_train.shape}, Test: {X_test.shape}")
 
     # initialize CAKE
-    if method == "cake":
-        cake = CAKE(model_name="gpt-4o-mini", device=device)
-        strategy = cake.model_name
-        print(f"LLM: {strategy}")
-        print(f"base kernels: {cake.base_kernels}")
-        print(f"operators: {cake.operators}")
+    cake = CAKE(
+        num_population=num_population,
+        model_name=model_name
+    )
+    print(f"Base kernels: {cake.base_kernels}")
+    print(f"Operators: {cake.operators}")
 
-    for i in tqdm(range(BUDGET)):
-        # compute incumbents and GAP
-        incumbents[r, i] = train_y.max().item()
-        gap[r, i] = (train_y.max().item() - init_y) / (ground_truth_y - init_y)
-        print(f"incumbent: {incumbents[r, i]:.4f}")
-        print(f"GAP: {gap[r, i]:.4f}")
+    # run evolutionary generations
+    fitness_history = []
+    for gen in range(num_generations):
+        best_kernel, best_cka = cake.run(X_train, y_train)
+        fitness_history.append(best_cka)
+        print(f"  Gen {gen + 1}: best kernel = {best_kernel}, CKA = {best_cka:.4f}")
 
-        # use CAKE to select the kernel
-        if method == "cake":
-            cake.run(train_x, train_y)
-            next_x = cake.get_next_query(bounds)
+    # final evaluation: fit SVM with the best kernel
+    best_kernel, best_cka = cake.get_best_kernel()
+    model, cka, test_acc = fit_svm_model(X_train, y_train, best_kernel, X_test, y_test)
 
-        next_y = objective(next_x)
+    print(f"\n  Best kernel: {best_kernel}")
+    print(f"  CKA score:   {cka:.4f}")
+    print(f"  Test accuracy: {test_acc:.4f}")
 
-        next_x = next_x.to(device)
-        next_y = next_y.to(device)
+    # print population
+    print(f"  Population:")
+    for k, v in cake.population.items():
+        print(f"    {k}: CKA = {v['fitness']:.4f}")
 
-        # update the data
-        train_x = torch.cat([train_x, next_x])
-        train_y = torch.cat([train_y, next_y])
-
-# save the results
-torch.save(incumbents, f"./results/{method}/incumbents_{strategy}_{task}_repeat{REPEAT}.pth")
-torch.save(gap, f"./results/{method}/gap_{strategy}_{task}_repeat{REPEAT}.pth")
+print("\n" + "=" * 50)
+print("Done.")
